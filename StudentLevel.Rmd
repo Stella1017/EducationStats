@@ -1,0 +1,185 @@
+---
+title: "StudentLevel"
+author: "Stella Li"
+date: "12/9/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load("ggplot2","knitr","arm","foreign","data.table", "readr", "stringr", "plyr", "dplyr", "rworldmap", "gridExtra", "stats", "PerformanceAnalytics")
+```
+
+```{r}
+student <- read.delim("~/Google Drive/600-BU-MSSP/612-Fall2018/MA678/TermProject/INT_STU12_DEC03.txt", header = FALSE)
+student$V1 <- as.character(student$V1)
+
+###feature selection
+fun1 <- function(x) {substr(x, start = 25, stop = 31)}
+pos <- as.data.frame(list("variable" = c("Country Code"), "start" = 1, "stop" = 3))
+pos <- rbind(pos, c("ID", 32, 36))
+pos <- rbind(pos, c("male",47, 47))
+pos <- rbind(pos, c("homework", 200, 203))
+pos <- rbind(pos, c("OutHours", 914, 921))
+
+
+
+student$`Country Code` <- sapply(student$V1, fun1) #1-3
+student$ID <- sapply(student$V1, fun1) #32-36
+#student$schoolID <- sapply(student$V1, fun1) #25-31
+student$OutHours <- sapply(student$V1, fun1) #914-921
+student$male <- sapply(student$V1, fun1); student$male <- as.numeric(student$male) - 1 #47
+student$homework <- sapply(student$V1, fun1) #200-203
+#student$languageclass <- sapply(student$V1, fun1) #261-264
+#student$mathclass <- sapply(student$V1, fun1) #265-268
+s#tudent$scienceclass <- sapply(student$V1, fun1) #269-272
+student$ESCS <- sapply(student$V1, fun1) #650-657, Index of economic social and cultural status
+student$parentEd <- sapply(student$V1, fun1) #721
+student$languageHome <- sapply(student$V1, fun1) #840-842
+student$languageTest <- sapply(student$V1, fun1) #1004-1006
+student$sameLanguage <- student$languageHome == student$languageTest
+student$LTimeReading <- sapply(student$V1, fun1) #844-847
+student$LTimeMath <- sapply(student$V1, fun1) #884-887
+student$LTimeScience <- sapply(student$V1, fun1) #948-951
+student$math1 <- sapply(student$V1, fun1) #1150-1158
+student$math2 <- sapply(student$V1, fun1) #1159-1167
+student$math3 <- sapply(student$V1, fun1) #1168-1176
+student$math4 <- sapply(student$V1, fun1) #1177-1185
+student$math5 <- sapply(student$V1, fun1) #1186-1194
+student$read1 <- sapply(student$V1, fun1) #1510-1518
+student$read2 <- sapply(student$V1, fun1) #1519-1527
+student$read3 <- sapply(student$V1, fun1) #1528-1536
+student$read4 <- sapply(student$V1, fun1) #1537-1545
+student$read5 <- sapply(student$V1, fun1) #1546-1554
+student$science1 <- sapply(student$V1, fun1) #1555-1563
+student$science2 <- sapply(student$V1, fun1) #1564-1572
+student$science3 <- sapply(student$V1, fun1) #1573-1581
+student$science4 <- sapply(student$V1, fun1) #1582-1590
+student$science5 <- sapply(student$V1, fun1) #1591-1599
+
+cnames <- colnames(student[ , 17:31])
+for (i in cnames){
+  student[,i] <- as.numeric(student[,i])
+}
+#save(student, file = "ExtractedStudentData.txt")
+
+studentlevel <- student[ ,-1]
+studentlevel$S_ID <- 1:480174
+studentlevel$Math <- rowMeans(studentlevel[ ,16:20])
+studentlevel$Reading <- rowMeans(studentlevel[ ,21:25])
+studentlevel$Science <- rowMeans(studentlevel[ ,26:30])
+studentlevel <- studentlevel[ , -c(10,11,16:30)]
+
+summary(studentlevel)
+#many 9997 n/a, 9998 invalid, 9999 missing values
+
+studentlevel$OutHours <- as.numeric(studentlevel$OutHours)
+invalidhour <- studentlevel[studentlevel$OutHours == "9997"|
+                              studentlevel$OutHours == "9998"|
+                              studentlevel$OutHours == "9999", "S_ID"]
+studentlevel$ESCS <- as.numeric(studentlevel$ESCS)
+invalidescs <- studentlevel[studentlevel$ESCS == "9997"|
+                              studentlevel$ESCS == "9998"|
+                              studentlevel$ESCS == "9999", "S_ID"]
+
+studentlevel$LTimeReading <- as.numeric(studentlevel$LTimeReading)
+invalidreadingtime <- studentlevel[studentlevel$LTimeReading == "9997"|
+                                     studentlevel$LTimeReading == "9998"|
+                                     studentlevel$LTimeReading == "9999", "S_ID"]
+
+studentlevel$LTimeMath <- as.numeric(studentlevel$LTimeMath)
+invalidmathtime <- studentlevel[studentlevel$LTimeMath == "9997"|
+                                     studentlevel$LTimeMath == "9998"|
+                                     studentlevel$LTimeMath == "9999", "S_ID"]
+
+studentlevel$LTimeScience <- as.numeric(studentlevel$LTimeScience)
+invalidsciencetime <- studentlevel[studentlevel$LTimeScience == "9997"|
+                                     studentlevel$LTimeScience == "9998"|
+                                     studentlevel$LTimeScience == "9999", "S_ID"]
+
+invalidstudent <- union(invalidescs,invalidhour)
+invalidstudent <- union(invalidstudent, invalidmathtime)
+invalidstudent <- union(invalidstudent, invalidreadingtime)
+invalidstudent <- union(invalidstudent, invalidsciencetime)
+studentlevel <- studentlevel[!studentlevel$S_ID %in% invalidstudent, ]
+
+NoStudent2 <- studentlevel %>% group_by(`Country Code`) %>% summarise(n = n()) %>% ungroup()
+NoStudent <- left_join(NoStudent, NoStudent2, by = "Country Code")
+NoStudent2$row <- 5762
+for (i in 2:64) {NoStudent2$row[i] = NoStudent2$row[i-1] + NoStudent2$n[i]}
+set.seed(1017)
+index <- sample(x = 1:NoStudent2$row[1], size = round(NoStudent2$n[1]/10, 0))
+for (i in 2:64) {
+  x <- (NoStudent2$row[i-1]+1):NoStudent2$row[i]
+  size <- round(NoStudent2$n[i]/10, 0)
+  index <- append(index, sample(x = x, size = size))
+  }
+student65countries <- studentlevel[index, ]
+studentCountryCode <- unique(student65countries$`Country Code`)
+student65countries$`Country Code`[student65countries$`Country Code` == "QCN"] <- "CHN" #change "shanghai" to "China"
+load("CountryCode.RData")
+Student2012 <- student65countries[student65countries$`Country Code` %in% CountryCode60, ]
+for (i in c(2,4:13)) {
+  Student2012[, i] <- as.numeric(Student2012[, i])
+}
+save(Student2012, file = "Student2012.csv")
+
+###### check sample
+CountryMeanRead <- Student2012 %>% group_by(`Country Code`) %>% summarise(read_mean = mean(`Reading`))
+CountryMeanMath <- Student2012 %>% group_by(`Country Code`) %>% summarise(read_mean = mean(`Math`))
+CountryMeanScience <- Student2012 %>% group_by(`Country Code`) %>% summarise(read_mean = mean(`Science`))
+CountryMeanRead <- left_join(CountryMeanRead, Countries[, c(1,2)], by = "Country Code")
+CountryMeanRead$diff <- (CountryMeanRead$read_mean - CountryMeanRead$Reading)/CountryMeanRead$Reading
+CountryMeanMath <- left_join(CountryMeanMath, Countries[, c(1,3)], by = "Country Code")
+CountryMeanMath$diff <- (CountryMeanMath$read_mean - CountryMeanMath$Math)/CountryMeanMath$Math
+CountryMeanScience <- left_join(CountryMeanScience, Countries[, c(1,4)], by = "Country Code")
+CountryMeanScience$diff <- (CountryMeanScience$read_mean - CountryMeanScience$Science)/CountryMeanScience$Science
+
+StudentLevel$LTimeReading <- round(StudentLevel$LTimeReading/60, 2)
+StudentLevel$LTimeMath <- round(StudentLevel$LTimeMath/60, 2)
+StudentLevel$LTimeScience <- round(StudentLevel$LTimeScience/60, 2)
+StudentLevel <- Student2012[, c(1,3,7:9,2, 10:15)]
+
+###### check distribution and correlation
+summary(Student2012)
+hist(Student2012$OutHours) #need log transform
+hist(log(Student2012$OutHours))
+par(mfrow=c(2,2))
+#hist(Student2012$languageclass)
+#hist(Student2012$mathclass)
+#hist(Student2012$scienceclass)
+hist(Student2012$parentEd)
+par(mfrow=c(1,1))
+hist(log(Student2012$LTimeReading))
+hist(log(Student2012$LTimeMath))
+hist(log(Student2012$LTimeScience))
+
+
+###Correlation
+library(PerformanceAnalytics)
+studentdata <- Student2012[ , -c(1, 17)]
+#chart.Correlation(studentdata, histogram=TRUE, pch=19)
+chart.Correlation(StudentLevel[ 1:1000,c(2:15)], histogram=TRUE, pch=19)
+
+
+resStudent <- cor(StudentLevel[,c(2:15)],  use = "complete.obs")
+corrplot(resStudent, type = "upper", order = "hclust", tl.col = "black", tl.srt = 45, tl.cex = .7)
+```
+
+```{r corr_check, echo=FALSE, fig.align="center", fig.cap= "Correlation Table of Predictors", eval=FALSE}
+set.seed(0527)
+index <- sample(StudentLevel$S_ID, 5000)
+s_dt <- StudentLevel[StudentLevel$S_ID %in% index, 2:15]
+
+corr_c <- chart.Correlation(CountryLevel[,c(2:4,7:9)], histogram=TRUE, pch=19)
+title(main = "(a) Country Level Predictors Correlation Table")
+
+corr_s <- chart.Correlation(s_dt, histogram=TRUE, pch=19)
+title(main = "(b) Student Level Predictors Correlation Table")
+
+
+
+
+###Join student table with country level table
+```
+

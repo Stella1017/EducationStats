@@ -1,0 +1,222 @@
+---
+title: "WorldBankEdu"
+author: "Stella Li"
+date: "11/26/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load("ggplot2","knitr","arm","foreign","data.table", "readr", "stringr", "plyr", "dplyr", "rworldmap", "gridExtra", "stats", "PerformanceAnalytics")
+
+
+```
+
+## EDA
+```{r read_data & EDA}
+#read original data
+setwd("~/Google Drive/600-BU-MSSP/612-Fall2018/MA678/TermProject")
+EdStatsData <- read_csv("edstats-csv-zip-32-mb-/EdStatsData.csv") #886930 rows, 70 variables
+
+length(unique(EdStatsData$`Country Code`)) #242
+length(unique(EdStatsData$`Indicator Name`)) #3665
+
+index1 <- c(4)
+for (i in 5:70){
+  if(sum(is.na(EdStatsData[ , i]))/886930 > .95) index1 <- append(index1, i)
+}
+SimplifiedData <- EdStatsData[ , -index1]
+
+```
+
+
+```{r select_coutries}
+PISArows <- str_which(SimplifiedData$`Indicator Name`, "PISA")
+PISA <- SimplifiedData[PISArows, ]
+#find countries participated in 2012 PISA test
+PISA2012 <- PISA[!is.na(PISA$`2012`), c("Country Code", "Indicator Name","2012")]
+length(unique(PISA2012$`Country Code`)) #64
+#find countries participated in 2015 PISA test
+PISA2015 <- PISA[!is.na(PISA$`2015`), c("Country Code", "Indicator Name","2015")]
+PISA2015$`2015` <- as.numeric(PISA2015$`2015`)
+length(unique(PISA2015$`Country Code`)) #71
+#find countries participated in both tests
+Countries <- intersect(PISA2015$`Country Code`, PISA2012$`Country Code`) #62 countries
+
+measures <- c("PISA: Mean performance on the mathematics scale", "PISA: Mean performance on the reading scale", "PISA: Mean performance on the science scale")
+PISA2012 <- PISA2012[PISA2012$`Country Code` %in% Countries & PISA2012$`Indicator Name` %in% measures, ]
+excpt <- PISA2012 %>% group_by(`Country Code`) %>% summarise(n = n())
+excpt <- excpt$`Country Code`[excpt$n != 3] #find countries don't have all three test results
+
+PISA2015 <- PISA2015[PISA2015$`Country Code` %in% Countries & PISA2015$`Indicator Name` %in% measures, ]
+excpt2 <- PISA2015 %>% group_by(`Country Code`) %>% summarise(n = n())
+excpt2 <- excpt2$`Country Code`[excpt2$n != 3] #find countries don't have all three test results
+excpt <- union(excpt, excpt2)
+Countries <- as.data.frame(Countries[!Countries %in% excpt])
+colnames(Countries) <- "Country Code"
+CountryCode60 <- Countries$`Country Code`
+#save(CountryCode60, file = "CountryCode.RData")
+PISA2012 <- PISA2012[PISA2012$`Country Code` %in% Countries$`Country Code`, ]
+PISA2015 <- PISA2015[PISA2015$`Country Code` %in% Countries$`Country Code`, ]
+```
+
+
+```{r get_dependent_variable}
+PISA2012$year <- 2012
+PISA2012$`Indicator Name` <- gsub(".* the ", "", PISA2012$`Indicator Name`)
+PISA2012$`Indicator Name` <- gsub(" scale", "", PISA2012$`Indicator Name`)
+colnames(PISA2012) <- c("Country Code", "Subject", "Score", "Test Year")
+reading2012 <- PISA2012[PISA2012$Subject == "reading", ]
+reading2012$StndScore <- scale(reading2012$Score)
+
+PISA2015$year <- 2015
+PISA2015$`Indicator Name` <- gsub(".* the ", "", PISA2015$`Indicator Name`)
+PISA2015$`Indicator Name` <- gsub(" scale", "", PISA2015$`Indicator Name`)
+colnames(PISA2015) <- c("Country Code", "Subject", "Score", "Test Year")
+reading2015 <- PISA2015[PISA2015$Subject == "reading", ]
+reading2015$StndScore <- scale(reading2015$Score)
+
+
+Countries$Reading <- PISA2012$Score[PISA2012$Subject == c("reading")]
+Countries$Math <- PISA2012$Score[PISA2012$Subject == c("mathematics")]
+Countries$Science <- PISA2012$Score[PISA2012$Subject == c("science")]
+AMap <- joinCountryData2Map(Countries, joinCode = "ISO3", nameJoinColumn = "Country Code")
+mapCountryData(AMap, nameColumnToPlot="Reading", catMethod = "quantiles",
+               missingCountryCol = gray(.8))
+mapCountryData(AMap, nameColumnToPlot="Math", catMethod = "quantiles",
+               missingCountryCol = gray(.8))
+mapCountryData(AMap, nameColumnToPlot="Science", catMethod = "quantiles",
+               missingCountryCol = gray(.8))
+```
+
+
+```{r get_independent_variables}
+#Read country data
+CountryData <- read_csv("edstats-csv-zip-32-mb-/EdStatsCountry.csv")
+CountryData <- CountryData[CountryData$`Country Code` %in% Countries$`Country Code`, 
+                           c("Country Code", "Region", "Income Group")]
+Countries <- join(Countries, CountryData, by = "Country Code")
+
+#other country level predictors
+duration <- SimplifiedData[SimplifiedData$`Indicator Name` == c("Duration of compulsory education (years)"), c("Country Code","2012")]
+colnames(duration) <- c("Country Code","CompulsoryEd")
+Countries <- join(Countries, duration, by = "Country Code")
+ggplot(Countries, aes(x = factor(CompulsoryEd))) + geom_dotplot(stackgroups = TRUE, method = "histodot", dotsize = .8) +  scale_y_continuous(NULL, breaks = NULL) + theme(legend.position = "none") 
+```
+
+```{r GDP}
+GDP <- SimplifiedData[SimplifiedData$`Indicator Name`=="GDP per capita (current US$)", 
+                      c("Country Code", "2007", "2008", "2009", "2010", "2011")]
+GDP$ave5yrGDP <- rowMeans(GDP[, 2:5])
+Countries <- join(Countries, GDP[ , c("Country Code","ave5yrGDP")], by = "Country Code")
+
+p1 <- ggplot(Countries, aes(x = `ave5yrGDP`, y = `Reading`, colour = as.factor(`Region`))) + geom_point() + labs(x = "5 years average GDP per capita (current US$)", y = "Reading rank in 2012") + theme(legend.position = "none")
+p2 <- ggplot(Countries, aes(x = `ave5yrGDP`, y = `Math`, colour = as.factor(`Region`))) + geom_point() + labs(x = "5 years average GDP per capita (current US$)", y = "Math rank in 2012") +theme(legend.position = "none")
+p3 <- ggplot(Countries, aes(x = `ave5yrGDP`, y = `Science`, colour = as.factor(`Region`))) + geom_point() + labs(x = "5 years average GDP per capita (current US$)", y = "Science rank in 2012") + theme(legend.position = "right")
+grid.arrange(grid.arrange(p1, p2, ncol = 2), p3, nrow = 2)
+
+```
+
+
+```{r}
+#About kids who were 15 in 2012 on Education Attainment
+attainment2012 <- c("Barro-Lee: Average years of total schooling, age 35-39, total", "Barro-Lee: Average years of total schooling, age 40-44, total", "Barro-Lee: Percentage of population age 35-39 with secondary schooling. Completed Secondary", "Barro-Lee: Percentage of population age 40-44 with secondary schooling. Completed Secondary")
+attainment1997 <- c("Barro-Lee: Average years of total schooling, age 20-24, total","Barro-Lee: Average years of total schooling, age 25-29, total")
+earlychildhood <- c("Percentage of students in early childhood educational development programmes who are female (%)")
+expenditure <- c("Current expenditure as % of total expenditure in public institutions (%)", "Government expenditure on education as % of GDP (%)", "Government expenditure per lower secondary student (PPP$)", "Expenditure on lower secondary as % of total government expenditure (%)")
+literacy <- c("Literacy rate, population 25-64 years, both sexes (%)", "Primary completion rate, both sexes (%)", "Lower secondary completion rate, both sexes (%)")
+teacher <- c("Pupil-teacher ratio in lower secondary education (headcount basis)", "Percentage of teachers in lower secondary education who are qualified, both sexes (%)")
+
+measurements <- c(attainment1997, attainment2012, earlychildhood, expenditure, literacy, teacher)
+data2 <- SimplifiedData[SimplifiedData$`Indicator Name` %in% measurements, ]
+data2 <- data2[data2$`Country Code` %in% Countries$`Country Code`, c(2,3,13:33)]
+
+#parent schooling
+Countries$ParentSchool1 <- data2[data2$`Indicator Name` == "Barro-Lee: Average years of total schooling, age 20-24, total", "1995"]
+Countries$ParentSchool2 <- data2[data2$`Indicator Name` == "Barro-Lee: Average years of total schooling, age 25-29, total", "1995"]
+Countries$ParentSchool3 <- data2[data2$`Indicator Name` == "Barro-Lee: Average years of total schooling, age 35-39, total", "2010"]
+Countries$ParentSchool4 <- data2[data2$`Indicator Name` == "Barro-Lee: Average years of total schooling, age 40-44, total", "2010"]
+Countries$ParentSchool5 <- data2[data2$`Indicator Name` == "Barro-Lee: Percentage of population age 35-39 with secondary schooling. Completed Secondary", "2010"]
+Countries$ParentSchool6 <- data2[data2$`Indicator Name` == "Barro-Lee: Percentage of population age 40-44 with secondary schooling. Completed Secondary", "2010"]
+
+#education expenditure
+Countries$Expenditure1 <- rowMeans(data2[data2$`Indicator Name` == "Current expenditure as % of total expenditure in public institutions (%)", 18:20], na.rm = TRUE)
+Countries$Expenditure2 <- rowMeans(data2[data2$`Indicator Name` == "Government expenditure on education as % of GDP (%)", 18:20], na.rm = TRUE)
+Countries$Expenditure3 <- rowMeans(data2[data2$`Indicator Name` == "Government expenditure per lower secondary student (PPP$)", 18:20], na.rm = TRUE)
+Countries$Expenditure4 <- rowMeans(data2[data2$`Indicator Name` == "Expenditure on lower secondary as % of total government expenditure (%)", 18:20], na.rm = TRUE)
+
+#education teacher ratio
+Countries$Teacher <- rowMeans(data2[data2$`Indicator Name` == "Pupil-teacher ratio in lower secondary education (headcount basis)", 18:20], na.rm = TRUE)
+
+#literacy
+Countries$CompletePrimary <- rowMeans(data2[data2$`Indicator Name` == "Primary completion rate, both sexes (%)", 18:20], na.rm = TRUE)
+Countries$CompleteLowerSec <- rowMeans(data2[data2$`Indicator Name` == "Lower secondary completion rate, both sexes (%)", 18:20], na.rm = TRUE)
+
+save(Countries, file = "Country2012.csv")
+```
+
+```{r correlation}
+mydata <- Countries[, c(2:4, 7:21)]
+chart.Correlation(mydata, histogram=TRUE, pch=19)
+mydata2 <- Countries[, c(2:4, 15:21)]
+chart.Correlation(mydata2, histogram=TRUE, pch=19)
+```
+
+```{r }
+#nodataParentS4 <- Countries[is.na(Countries$ParentSchool4), "Country Code"]
+nodataParentS6 <- Countries[is.na(Countries$ParentSchool6), "Country Code"]
+nodataExpenditure2 <- Countries[is.na(Countries$Expenditure2), "Country Code"]
+#nodataTeacher <- Countries[is.na(Countries$Teacher), "Country Code"]
+#nodataLiteracy <- Countries[is.na(Countries$CompleteLowerSec), "Country Code"]
+#nodataCountry <- union(nodataParentS4, nodataParentS6)
+nodataCountry <- union(nodataParentS6, nodataExpenditure2)
+#nodataCountry <- union(nodataCountry, nodataTeacher)
+CountryLevel <- Countries[!Countries$`Country Code` %in% nodataCountry, c(1:6,8,14,16)]
+
+CountryLevel$Region <- as.factor(CountryLevel$Region)
+CountryLevel$`Income Group`<- as.factor(CountryLevel$`Income Group`)
+
+save(CountryLevel, file = "CountryLevel.csv")
+```
+
+
+```{r correlation check}
+resCountry <- cor(Countries[,c(2:4,7,8,12,14,16,18,19)],  use = "complete.obs")
+corrplot(resCountry, type = "upper", order = "hclust", tl.col = "black", tl.srt = 45)
+#chart.Correlation(StudentLevel[,c(2:16)], histogram=TRUE, pch=19)
+```
+
+```
+
+```{r}
+cm3_1 <- math %>% group_by(`Country Code`) %>% summarise(CountryMean = mean(Math))
+allmean <- mean(StudentLevel$Math)
+cm3_1$diff <- cm3_1$CountryMean-allmean
+cm3_1$type <- ifelse(cm3_1$diff > 0, "above", "below")
+cm3_1 <- cm3_1[order(cm3_1$diff), ]
+cm3_1$`Country Code` <- factor(cm3_1$`Country Code`, levels =cm3_1$`Country Code`) 
+g1 <- ggplot(cm3_1, aes(x=`Country Code`, y=diff, label=diff)) + 
+  geom_bar(stat='identity', aes(fill=type), width=.5)  +
+  scale_fill_manual(name="Country Mean", 
+                    labels = c("Above Average", "Below Average"), 
+                    values = c("above"="#00ba38", "below"="#f8766d")) +
+  scale_x_discrete()
+cm3_2 <- md2_m$coefficients[1:54]; cm3_2 <- as.data.frame(cm3_2)
+cm3_2$`Country Code` <- rownames(cm3_2); cm3_2$`Country Code` <- gsub("`.*`", "", cm3_2$`Country Code`)
+rownames(cm3_2) <- cm3_2$`Country Code`
+cmean <- mean(cm3_2$cm3_2)
+cm3_2$diff <- cm3_2$cm3_2 - cmean; cm3_2$type <- ifelse(cm3_2$diff > 0, "above", "below")
+cm3_2 <- left_join(cm3_2, cm3_1, by = "Country Code")
+cm3_2 <- cm3_2[order(cm3_2$diff.y),]
+cm3_2$`Country Code` <- factor(cm3_2$`Country Code`, levels =cm3_2$`Country Code`) 
+ggplot(cm3_2, aes(x=`Country Code`, y=diff.x, label=diff.x)) + 
+  geom_bar(stat='identity', aes(fill=type.x), width=.5)  +
+  scale_fill_manual(name="Country Mean", 
+                    labels = c("Above Average", "Below Average"), 
+                    values = c("above"="#00ba38", "below"="#f8766d"))
+```
+              
+
+
+
+
