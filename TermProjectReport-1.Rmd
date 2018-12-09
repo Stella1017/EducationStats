@@ -1,0 +1,417 @@
+---
+title: "Education Stats Analysis"
+author: "Stella Li"
+date: "12/8/2018"
+output:
+  pdf_document: 
+    fig_caption: yes
+    fig_height: 3
+    latex_engine: xelatex
+fontsize: 10pt
+geometry: margin= 0.8in
+abstract: "This report analyzes education data collected by International Organizations, e.g. World Bank and OECD PISA test team. The focus of this analysis is on the effect of education status of parents on academic performances of students in 2012 PISA test. The linear regression and mixed effect models indicates that there is a possitive association between education backgroud of parents and test scores of students, and the association is interacting with the ESCS scores of the students. \\par
+  \\textbf{Keywords:} education, statistics, multilevel regression"
+header-includes:
+  - \usepackage{dcolumn}
+  - \usepackage{array}
+  - \usepackage{caption}
+  - \usepackage{geometry}
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.path = 'figures/', fig.cap = "",message=FALSE, warning=FALSE)
+
+setwd("~/Google Drive/600-BU-MSSP/612-Fall2018/MA678/TermProject")
+pacman::p_load("ggplot2","knitr","arm","foreign","data.table", "readr", "stringr", "plyr", "dplyr", "rworldmap", "gridExtra", "stats", "corrplot","grid", "PerformanceAnalytics", "stargazer")
+load("StudentLevel.csv"); load("CountryLevel.csv")
+CountryLevel$ParentSchool6 <- CountryLevel$ParentSchool6$`2010`
+```
+
+```{r setup function, echo=FALSE}
+#http://rpubs.com/sjackman/grid_arrange_shared_legend
+grid_arrange_shared_legend <- function(..., ncol = length(list(...)), nrow = 1, position = c("bottom", "right")) {
+
+  plots <- list(...)
+  position <- match.arg(position)
+  g <- ggplotGrob(plots[[1]] + theme(legend.position = position))$grobs
+  legend <- g[[which(sapply(g, function(x) x$name) == "guide-box")]]
+  lheight <- sum(legend$height)
+  lwidth <- sum(legend$width)
+  gl <- lapply(plots, function(x) x + theme(legend.position="none"))
+  gl <- c(gl, ncol = ncol, nrow = nrow)
+
+  combined <- switch(position,
+                     "bottom" = arrangeGrob(do.call(arrangeGrob, gl),
+                                            legend,
+                                            ncol = 1,
+                                            heights = unit.c(unit(1, "npc") - lheight, lheight)),
+                     "right" = arrangeGrob(do.call(arrangeGrob, gl),
+                                           legend,
+                                           ncol = 2,
+                                           widths = unit.c(unit(1, "npc") - lwidth, lwidth)))
+
+  grid.newpage()
+  grid.draw(combined)
+
+  # return gtable invisibly
+  invisible(combined)
+
+}
+```
+
+# 1.Introduction  
+## Background and Research Question 
+Understanding how well the education systems prepare their students and what factors impact the outcomes is essential for students, parents, teachers and governments.^[1]^ This report attempts to explore the second question via analyzing results from international comparative census/survey and assessments. Specifically, I'm interested in the relationship between the education performance of students and the education status of parents, as well as factors such as studying strategy, access to education and social-economic backgrounds of students. The second fold of this study is to explore variances of education outcomes among countries over the world. 
+      
+## Data Source  
+The data used in this study is from two sources: World Bank EdStats All Indicator Query and OECD PISA database.   
+    
+I downloaded the World Bank data from their account on Kaggle.com. The dataset "holds over 4,000 internationally comparable indicators that describe education access, progression, completion, literacy, teachers, population, and expenditures."^[2]^ It actually contains data from several datasets maintained by other organizations, such as Barro-Lee Educational Attainment Data and UNESCO Institute for Statistics. I selected indicators in this dataset as predictors in my models.   
+    
+The "dependent variable" is 2012 PISA test result. Programme for International Student Assessment (PISA) was created in 1997, as a measure of effectiveness of education systems across OECD (Organisation for Economic Co-operation and Development) countries "within a common internationally agreed framework".^[1]^ PISA tests have a strong focus on the preparedness for the future, and include three subjects: reading, mathematics and science.^[3]^ Via student-, teacher- and school- level questionnaires, PISA also collected information on socioeconomic background, studying strategy, attitudes, education access, etc. of students and schools. The student questionnaires data was downloaded from the PISA website.^[4]^ I selected some of the features as my predictors.    
+    
+# 2.Methods and Results   
+##2.1 Exploratory Data Analysis   
+The EdStats data file contains information about 242 countries on 3,665 educational features from 1971 to 2017, as well as projections up to 2050. The 2012 PISA test data contains the full set of responses from 480,174 students from 65 countries and contains 634 variables. The data exploratory process therefore has four steps:   
+  1) Deleted rows and columns with too many n/a, invalid or missing values; and used stratified sampling to get 10% students for each country;  
+  2) Selected variables that are relative to the question of this study;  
+  3) Did exploratory data analysis on variables of interest;  
+  4) Finally, selected variables to include in the models.  
+
+###2.1.1 PISA scores    
+First, I checked the distribution of PISA scores among different genders, countries and country income groups.   
+
+A. PISA scores vs gender    
+```{r pisa_gender, echo = FALSE, fig.cap="Distribution of PISA Score by Genders \\label{fig:pisa_gender}", fig.align='left'}
+s_r <- ggplot(StudentLevel, aes(Reading, fill = factor(male)), alpha =.9) + 
+  geom_histogram(binwidth = 10, position = "dodge") + scale_y_continuous(limits = c(0,520)) +
+  geom_vline(xintercept = mean(StudentLevel$Reading)) +
+  scale_fill_discrete(name = "Gender", labels = c("Male", "Female"))
+s_m <- ggplot(StudentLevel, aes(Math, fill = factor(male)), alpha =.9) + 
+  geom_histogram(binwidth = 10, position = "dodge") + scale_y_continuous(limits = c(0,520)) +
+  geom_vline(xintercept = mean(StudentLevel$Math))  + 
+  scale_fill_discrete(name = "Gender", labels = c("Male", "Female"))
+s_s <- ggplot(StudentLevel, aes(Science, fill = factor(male)), alpha =.9) + 
+  geom_histogram(binwidth = 10, position = "dodge") + scale_y_continuous(limits = c(0,520)) + 
+  geom_vline(xintercept = mean(StudentLevel$Science)) +
+  scale_fill_discrete(name = "Gender", labels = c("Male", "Female"))
+grid_arrange_shared_legend(s_r, s_m, s_s, nrow = 1, ncol = 3)
+#fig.cap="Distribution of PISA Score by Genders \\label{fig:pisa_gender}"
+```
+    
+The Figure \ref{fig:pisa_gender} shows the distribution of PISA scores of three subjects for two genders.  
+The black vertical line shows the mean score of all students for each subject respectively. The distributions are almost symmetric about their respective mean values, while there are slightly differences between the two genders in reading and math tests. More female students have higher-than-average reading scores while more male students have higher-than-average math scores.   
+    
+B. PISA score vs country    
+```{r pisa_cnt, echo=FALSE, fig.align= "left", fig.cap="Distribution of PISA Scores by Contries \\label{fig:pisa_cnt}"}
+cd_r <- ggplot(StudentLevel) + 
+  geom_density(aes(Reading, color = `Country Code`)) +
+  geom_density(aes(Reading), color = "black", linetype="dashed",size = 1) + 
+  theme(legend.position = "none")
+cd_m <- ggplot(StudentLevel) + 
+  geom_density(aes(Math, color = `Country Code`)) +
+  geom_density(aes(Math), color = "black", linetype="dashed",size = 1) + 
+  theme(legend.position = "none")
+cd_s <- ggplot(StudentLevel) + 
+  geom_density(aes(Science, color = `Country Code`)) +
+  geom_density(aes(Science), color = "black", linetype="dashed",size = 1) + 
+  theme(legend.position = "none")
+grid.arrange(cd_r, cd_m, cd_s, nrow = 1)
+
+#fig.cap="Distribution of PISA Scores by Contries \\label{fig:pisa_cnt}"
+
+```
+  
+I then checked the distribution of PISA test scores among all the countries.    
+In Figure \ref{fig:pisa_cnt}, the colorful lines shows the score distributions for each country and the dashed line shows the score distribution of all students. It is clear that there are many differences in the distributions, therefore, it is necessary to construct a multilevel model to analyze data.    
+    
+C. PISA scores vs. Income and Region    
+```{r pisa_income, echo=FALSE, fig.cap="Distribution of Average PISA Score \\label{fig:pisa_income}", fig.align= "left"}
+c_r <- ggplot(CountryLevel, aes(Reading, fill = factor(`Income Group`))) +
+  geom_histogram(binwidth = 20) + scale_y_continuous(limits = c(0,15)) +
+  geom_vline(xintercept = mean(CountryLevel$Reading)) + scale_fill_discrete(name=NULL)
+c_m <- ggplot(CountryLevel, aes(Math, fill = factor(`Income Group`))) +
+  geom_histogram(binwidth = 20) + scale_y_continuous(limits = c(0,15)) +
+  geom_vline(xintercept = mean(CountryLevel$Math)) + scale_fill_discrete(name=NULL)
+c_s <- ggplot(CountryLevel, aes(Science, fill = factor(`Income Group`))) +
+  geom_histogram(binwidth = 20) + scale_y_continuous(limits = c(0,15)) +
+  geom_vline(xintercept = mean(CountryLevel$Science)) + scale_fill_discrete(name=NULL)
+grid_arrange_shared_legend(c_r, c_m, c_s, nrow = 1, ncol = 3)
+
+#fig.cap="Distribution of Average PISA Score \\label{fig:pisa_income}"
+```   
+a) The OECD categorized all the countries into four income groups. So first I checked the distribution of average PISA scores of each country among different income groups.    
+    
+In Figure \ref{fig:pisa_income}, the black vertical lines shows the average of all country means.   
+    
+As it shows in Figure, most of the mean scores of countries in "High income: OECD" group are higher than average and most of the mean scores of countries in "Upper middle income" group. However, being in higher income group does not necessarily associated with having higher scores. It's also interesting that the histogram is bi-modal, meaning that the countries in these groups may have very different features.   
+```{r pisa_gdp, echo=FALSE, fig.height = 5,fig.cap="Average PISA Scores vs 5 year GDP per capita \\label{fig:pisa_gdp}"}
+p1 <- ggplot(CountryLevel, aes(x = `ave5yrGDP`, y = `Reading`, colour = as.factor(`Region`))) + geom_point() + labs(x = "5 years average GDP per capita (US$)", y = "Reading score in 2012") + theme(legend.position = "none")
+p2 <- ggplot(CountryLevel, aes(x = `ave5yrGDP`, y = `Math`, colour = as.factor(`Region`))) + geom_point() + labs(x = "5 years average GDP per capita (US$)", y = "Math score in 2012") +theme(legend.position = "none")
+p3 <- ggplot(CountryLevel, aes(x = `ave5yrGDP`, y = `Science`, colour = as.factor(`Region`))) + geom_point() + labs(x = "5 years average GDP per capita (US$)", y = "Science score in 2012") + theme(legend.position = "right") + scale_fill_discrete(name = "Region") + labs(color = "Region")
+
+grid.arrange(
+  p1, p2, p3,
+  widths = c(3,2,1),
+  layout_matrix = rbind(c(1,2,2),
+                        c(3,3,NA))
+)
+
+#fig.cap="Average PISA Scores vs 5 year GDP per capita \\label{fig:pisa_gdp}"
+```
+b) I further explored the relationship between average PISA test scores for each country and the 5-year average GDP per capita.   
+    
+In Figure \ref{fig:pisa_gdp}, different colors indicating different regions. For countries in the "Europe & Central Asia" region, though the 5-year average GDP per capita change a lot, the range of mean scores of these countries is relatively small than the ranges of other regions.   
+    
+From the above analyses, it is clear that it is reasonable and necessary to use multilevel models to analyze the data.   
+    
+D. PISA Scores vs Parent Education Background   
+    
+As I'm very interested in the association between parent education background and the students performance, I checked the relationships on both student level and country level. On student level, Figure \ref{fig:edu} shows that the overall trend of relationship between parent education and students reading scores are similar for different countries, however, the intercepts vary a lot. On the other hand, on country level, countries in different income groups have different trends.   
+    
+```{r edu, fig.height=6, fig.cap="PISA Scores vs Parents Education \\label{fig:edu}"}
+ed1 <- ggplot(StudentLevel, aes(x= as.factor(parentEd), y = Reading)) + 
+  geom_point(aes(color = `Country Code`)) + theme(legend.position = "none") + 
+  geom_smooth(formula = y ~ x, method = lm, se = FALSE, 
+              aes(group = `Country Code`, color = `Country Code`), size = .5) + 
+  xlab("Highest Parent Education Status")
+
+ed2 <- ggplot(CountryLevel, aes(x = ParentSchool6, y = Reading)) +
+  geom_point(aes(color = `Income Group`)) + theme(legend.position = "none") + 
+  geom_smooth(formula = y ~ x, method = lm, se = FALSE, size = .5) + 
+  xlab("Percentage of Population Age 40 to 44 with Completed Secondary Schooling") + 
+  ylab("Average PISA Reading Scores")
+
+grid.arrange(ed1, ed2, nrow=2)
+#fig.cap="PISA Scores vs Parents Education \\label{fig:edu}"
+```   
+    
+###2.1.2. Country Level Predictors    
+Initially I selected 17 features as country level predictors. I focused on information about two time periods: 2010-2012 and 1995-1997. As I'm very interested in learning about the parents of the students who took the PISA test in 2012, I selected the indicators about 20-29 years old population in 1995-1997 and 35-44 years old population in 2010-2012, assuming that the data can represent the characteristics of parents of those 2012 PISA test takers.   
+    
+However, there are many missing values in the dataset, as some census/surveys were conducted in some certain countries or in some certain years. Therefore, after further selection, correlation analysis and processing the raw data, I got 54 countries with 5 predictors: region, income group, average 5 years GDP per capita, government expenditure on education as % of GDP (%), and percentage of population age 40-44 completed secondary schooling (in 2010). (Summary of these features is in Appendix Table)
+    
+* `Country Code`: Three-letter country code for each country; treated as factors.   
+* `Region`: The region of a country. There are 5 regions.   
+* `Income Group`: The income group categories defined by OECD. There are four levels.   
+* `ave5yrGDP`: The average GDP per capita of 2007 to 2011 in current U.S. dollars.    
+* `ParentSchool6`: Percentage of population age 40-44 with completed secondary schooling in 2010.   
+* `Expediture2`: The average government expenditures on education as % of GDP (%) in 2010-2012.   
+    
+###2.1.3. Student Level Predictors    
+I extracted 17 features and 3 subject scores for each student, and then deleted the students with too many n/a, invalid or missing values. Then students were grouped by countries and 10% of students were randomly selected. Then I joined the student data table with country data table, and finally got information on 22,388 students (from 54 countries) with 9 predictors. Those predictors are about gender, education attitude and education access (out of school study time and total learning time for a certain subject), socioeconomic background, and education status of parents.    
+
+* `Country Code`: Three-letter country code for each country; treated as factors.   
+* `male`: Gender, male is coded as 1 and female is coded as 0.    
+* `ESCS`: Index of economic, social and cultural status.    
+* `parentEd`: Highest parent education status, from 1 to 9; treated as continuous variables.    
+* `sameLanguage`: Whether the test language is the same as the language student use at home.    
+* `OutHours`: Out-of-school study time per week in hours.   
+* `LTime<subject>`: Hours per week learning <subject> for each subject.   
+    
+I also checked the correlations among the numeric predictors for both country- and student- level predictors (with sampled students) and also learned about the distribution of each predictors. Some of the predictors need to be log transformed to get close-to-symmetric distributions.    
+    
+##2.2 Models and Results    
+### 2.2.1. Student level preditors (complete pooling)   
+In this model, I constructed models for three subjects separately, only taking student level indicators (do not include "country" as a variable). The models can be presented as:
+    
+$score_{i} = \alpha +\beta x_{i} + \epsilon_{i},\\\epsilon_{i} \sim N(0, ~\sigma^{2}_{y})$    
+```{r lm_model1, echo=FALSE, results="asis"}
+md1_r <- lm(Reading ~ male + ESCS + parentEd + sameLanguage + 
+              log(OutHours+1) + log(LTimeReading+1), data = StudentLevel)
+#summary(md1_r)
+#plot(md1_r, 1)
+md1_m <- lm(Math ~ male + ESCS +  parentEd + sameLanguage + 
+              log(OutHours+1)  + log(LTimeMath+1), data = StudentLevel)
+#summary(md1_m)
+#plot(md1_m, 1)
+md1_s <- lm(Science ~ male + ESCS + parentEd + sameLanguage +
+              log(OutHours+1) + log(LTimeScience+1), data = StudentLevel)
+#summary(md1_s)
+#plot(md1_s, 1)
+stargazer(md1_r, md1_m, md1_s, title = "Regression Models", align = TRUE, header = FALSE, digits = 2,
+          single.row = TRUE, no.space = TRUE, font.size = "small", column.sep.width = "2pt",
+          omit.stat = c("n"), table.placement = "h")
+```   
+I noticed that the coefficients of `parentEd` are negative in models for three subjects, which is counter-intuitive. Correlation table shows that there are strong correlation between `parentEd` and `ESCS`. It is reasonable that the socioeconomic status of a student is highly associated with the education background of their parents. Since I'm interesting the impact of parents on students' outcomes, I decide to keep `parentEd` and also check its interaction with `ESCS`.   
+The coefficients of the variable `OutHours` for science and math are not significant, and the effect sizes are small comparing with those of learning time for each subject, but there is no strong evidence that it should be excluded from the models, so I decide to keep it.   
+    
+```{r newmodel, echo=FALSE, results="asis"}
+md1_r1 <- lm(Reading ~ male + ESCS:parentEd + parentEd + sameLanguage + 
+              log(OutHours+1) + log(LTimeReading+1), data = StudentLevel)
+md1_m1 <- lm(Math ~ male + ESCS:parentEd + parentEd + sameLanguage + 
+              log(OutHours+1) + log(LTimeMath+1), data = StudentLevel)
+md1_s1 <- lm(Science ~ male + ESCS:parentEd +  parentEd + sameLanguage + 
+              log(OutHours+1) + log(LTimeScience+1), data = StudentLevel)
+stargazer(md1_r, md1_r1, md1_m, md1_m1, md1_s, md1_s1, label = "newmodel",
+          title = "Regression Model Comparison", align = TRUE, header = FALSE, digits = 2,
+          font.size = "small", column.sep.width = "1pt", order = c(1,2,3,7,4:6,8:10),
+          no.space = TRUE, omit.stat = c("n"), omit = c(1,5,10))
+```
+    
+Table \ref{newmodel} shows the changes in the coefficients of `parentEd`, `ESCS`, `ESCS`:`parentEd`, and some regression summary information. When I replace `ESCS` with the interaction term, the F Statistics drop significantly. However, among all models, the $R^2$ statistics are around 0.2, not changing too much. So there are more factors that can explain the variance among performance of students. 
+Take a look at models estimating Math scores as an example. In the left figure in Figure \ref{fig:residual_check}, the pink dots represent the revised model while the black dots represent the original model. The two models are very similar to each other, and are both not good at estimating actual score. The range of fitted values from both models are smaller than the real data.    
+I also checked residual plots for all models. The middle and the right figures in Figure \ref{fig:residual_check} are residual plot shows the residual plot of the revised student level model for math. The residuals are almost symmetrically distributed and there is no trend. However, there are many data points outside of the $\pm2\sigma$ range. The other residual plots follow a similar pattern to this one.    
+    
+```{r residual_check, echo=FALSE, fig.cap="Residual Plot \\label{fig:residual_check}"}
+md1_r_residual <- rstandard(md1_r); md1_r1_residual <- rstandard(md1_r1)
+md1_m_residual <- rstandard(md1_m); md1_m1_residual <- rstandard(md1_m1)
+md1_s_residual <- rstandard(md1_s); md1_s1_residual <- rstandard(md1_s1)
+df <- as.data.frame(cbind(x=md1_m1$fitted.values, y=md1_m1_residual))
+rsd <- ggplot() + geom_point(aes(x=md1_m1$fitted.values, y=md1_m1_residual), 
+                             shape = 1, size = .4, alpha = .3) +
+  geom_hline(yintercept = 2, color = "red", show.legend = FALSE, linetype="dashed") + 
+  geom_hline(yintercept = -2, color = "red", show.legend = FALSE, linetype="dashed") + 
+  labs(x= "Fitted Math Score", y= "Standardized Residual")
+hright <- ggplot(df, aes(x = y)) + 
+  geom_histogram(aes(y=..density..), fill = "white", color = "black", bins=100) + 
+  stat_density(colour = "red", geom="line", size = 1, position="identity", show.legend=FALSE) +
+  coord_flip() + theme_bw() + theme(axis.title.y = element_blank())
+mc <- ggplot() + 
+  geom_point(aes(md1_m$model$Math, md1_m$fitted.values), size = .2, alpha = .4) +
+  geom_point(aes(md1_m1$model$Math, md1_m1$fitted.values), size = .2, alpha = .3, color = "pink") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") + 
+  coord_fixed(ratio = 1) + labs(x = "Actual Math Score", y = "Fitted Math Score") + coord_flip()
+grid.arrange(mc, rsd, hright, ncol=3, nrow=1, widths=c(3, 3, 1))
+```
+    
+### 2.2.2. Add country level predictors (no pooling)    
+Based on the findings from exploratory data analysis, I add country level predictor to the model. First starting with country name as a variable and force it without an intercept. Then the models can be represented as:   
+$score_{i} = \alpha_{j[i]} + \beta x_{i} + \epsilon_{i},~ \\ \epsilon_{i} \sim N(0, ~\sigma^{2}_{y})$   
+```{r nopooling, echo=FALSE, results="asis"}
+md2_r <- lm(Reading ~ `Country Code` + male + ESCS:parentEd + parentEd + sameLanguage +
+               log(OutHours+1) + log(LTimeReading+1) - 1, data = StudentLevel)
+#summary(md2_r)
+md2_m <- lm(Math ~ `Country Code` + male + ESCS:parentEd + parentEd + sameLanguage +
+               log(OutHours+1) + log(LTimeMath+1) - 1, data = StudentLevel)
+#summary(md2_m)
+md2_s <- lm(Science ~ `Country Code` + male + ESCS:parentEd + parentEd + sameLanguage + 
+                log(OutHours+1)  + log(LTimeScience+1) - 1, data = StudentLevel)
+#summary(md2_s)
+stargazer(md2_r, md2_m, md2_s, title = "Regression Models with `Country`", align = TRUE, 
+          header = FALSE, digits = 2, omit = 1:54, single.row = TRUE, no.space = TRUE,
+          label = "nopooling", column.sep.width = "1pt", omit.stat = "n")
+```   
+In Table \ref{nopooling}, I omitted the printing of coefficients for all the countries as the list is too long. All the p-values of the coefficients for `Country Code` are less than 0.05. Though the signs of other predictors do not change comparing with previous models, the scale of impact changed a lot. In these models for three subjects, the coefficients of `log(OutHours)` now are statistically significant.    
+    
+The $R^2$ of these three models are significant larger than the previous models. It doesn't mean the models are "nearly perfect". In these models, I force the intercept to be 0. In other words, I set the "expected value" of the outcome to be 0. Since the equation of $R^2$ is \[R^2_{0} = 1~- ~\frac{\sum(y_{i}-\hat y)^2}{\sum(y_{i}-\bar y)^2}\] by setting intercepts to be 0, the new $R^2$ is now \[R^2 = 1~- ~\frac{\sum(y_{i}-\hat y)^2}{\sum(y_{i})^2}\] Though SSE and SST will both increase for new $R^2$, but SST tends to change more. Therefore, $\frac{SSE}{SST}$ decreases, and the $R^2$ increases a lot. We still need to look at fitted data from the new model.    
+    
+```{r residual_check2, echo=FALSE, fig.cap="Residual Plot \\label{fig:residual_check2}"}
+md2_m_residual <- rstandard(md2_m)
+df1 <- as.data.frame(cbind(x=md2_m$fitted.values, y=md2_m_residual))
+rsd1 <- ggplot() + geom_point(aes(x=md2_m$fitted.values, y=md2_m_residual), 
+                             shape = 1, size = .4, alpha = .3) +
+  geom_hline(yintercept = 2, color = "red", show.legend = FALSE, linetype="dashed") + 
+  geom_hline(yintercept = -2, color = "red", show.legend = FALSE, linetype="dashed") + 
+  labs(x= "Fitted Math Score", y= "Standardized Residual")
+hright1 <- ggplot(df, aes(x = y)) + 
+  geom_histogram(aes(y=..density..), fill = "white", color = "black", bins=100) + 
+  stat_density(colour = "red", geom="line", size = 1, position="identity", show.legend=FALSE) +
+  coord_flip() + theme_bw() + theme(axis.title.y = element_blank())
+mc1 <- ggplot() + 
+  geom_point(aes(md1_m1$model$Math, md1_m1$fitted.values), size = .2, alpha = .4, color = "pink") + 
+  geom_point(aes(md2_m$model$Math, md2_m$fitted.values), size = .2, alpha = .2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") + 
+  coord_fixed(ratio = 1) + labs(x = "Actual Math Score", y = "Fitted Math Score") + coord_flip()
+grid.arrange(mc1, rsd1, hright1, ncol=3, nrow=1, widths=c(3, 3, 1))
+```
+    
+The left figure in Figure \ref{fig:residual_check2} shows the comparison between the complete pooling model with and the new model. The pink points represent the previous model and the black points represent the new model. It looks like the new model improves estimation.    
+    
+Taking a look at residual plots in Figure \ref{fig:residual_check2}. The plots also look better than before: the data points that outside of the $\pm2\sigma$ range are fewer.   
+    
+### 2.2.3. Multi-level models (partial pooling)   
+I fit several models in this part, and use Math score as an example.    
+A. Partial pooling, varying intercept according to `Country Code`.    
+    
+$score_{i} = \alpha_{j[i]} + \beta x_{i} + \epsilon_{i},\\ \epsilon_{i} \sim N(0, ~\sigma^{2}_{y}), \\ \alpha_{j[i]} \sim N(\mu_{\alpha}, \sigma^2_{\alpha})$    
+    
+```{r echo=FALSE, results= "asis"}
+colnames(CountryLevel)[8] <- "ParentSchool6"
+math <- left_join(StudentLevel[, c(1:6,8,10)], CountryLevel[,c(1,5, 7:9)], by = "Country Code")
+md3_m1 <- lmer(Math ~ (1|`Country Code`) + male + ESCS:parentEd + parentEd + sameLanguage + 
+               log(OutHours+1) + log(LTimeMath+1), data = math)
+stargazer(md3_m1, md2_m, label="varyingintercept", header = FALSE, omit.stat = c("n", "ll", "bic", "rsq"), 
+          digits = 2, omit = 1:54, column.labels = c("Partial Pooling", "No Pooling"), 
+          model.names = FALSE, no.space = TRUE, single.row = TRUE)
+```
+    
+The below Table \ref{"varyingintercept"} shows the comparison between coefficients of the variables (except for those of `Country Code`) in the last model and fixed effects of varying intercept partial pooling model. The two models are very similar.    
+    
+```{r se, fig.cap="Changes in estimated math score and SE \\label{fig:se}"}
+cm1 <- StudentLevel %>% group_by(`Country Code`) %>% summarise(mean = mean(Math), sd = sd(Math))
+cm2 <- as.data.frame(ranef(md3_m1)$`Country Code`)
+cm2$mean <- cm2$`(Intercept)` + fixef(md3_m1)[1]
+cm2$sd <- se.ranef(md3_m1)$`Country Code`; cm2$`Country Code` <- rownames(cm2)
+g1 <- ggplot(cm1) + geom_pointrange(aes(ymax= mean + 2*sd, ymin = mean - 2*sd))+
+  aes(x = `Country Code`, y = mean) + ylim(180,780) + scale_x_discrete(name = "Country")+
+  labs(subtitle = "no pooling")
+g2 <- ggplot(cm2) + geom_pointrange(aes(ymax= mean + 2*sd, ymin = mean - 2*sd))+
+  aes(x = `Country Code`, y = mean) + ylim(180,780) + scale_x_discrete(name = "Country")+
+  labs(subtitle = "partial pooling")
+grid.arrange(g1, g2,nrow=1)
+```   
+The effect of varying intercept is to shrink the variance, as showed in Figure \ref{fig:se}    
+    
+B. Add a country level predictor: 5-year average GDP    
+    
+```{r results="asis"}
+math$Region <- as.factor(gsub(" & ","",math$Region))
+md3_m2 <- lmer(Math ~ (1|`Country Code`) + male + ESCS:parentEd + parentEd + sameLanguage +
+               log(OutHours+1) + log(LTimeMath+1) + log(ave5yrGDP), data = math)
+md3_m3 <- lmer(Math ~ (1|`Country Code`) + male + ESCS:parentEd + parentEd + sameLanguage +
+               log(OutHours+1) + log(LTimeMath+1) + log(ave5yrGDP) + Region:log(ave5yrGDP), data = math)
+md3_m4 <- lmer(Math ~ (1|`Country Code`) + male + ESCS:parentEd + parentEd + sameLanguage +
+               log(OutHours+1) + log(LTimeMath+1) + log(ave5yrGDP) + (log(ave5yrGDP)|Region), data = math)
+stargazer(md3_m2, md3_m3, md3_m4, header = FALSE, omit.stat = c("n", "ll", "bic"), 
+          digits = 2, label = "varyingslope")
+```   
+    
+The Table \ref{"varyingslope"} shows the result of three models for math scores.    
+* only introducing `log(ave5yrGDP)` variable to the varying intercept model   
+* introducing `log(ave5yrGDP)` variable and the interaction term between `Region` and `log(ave5yrGDP)`    
+* introducing `log(ave5yrGDP)`, and allow the slope of `log(ave5yrGDP)` to vary by `Region`   
+
+The random effect of the varying slope is:    
+```{r}
+ranef(md3_m4)$Region
+```
+    
+# 3.Discussion   
+## 3.1.Indications:    
+1. The model I fit all indicates that there are positive association between parent education status and students' performance on PISA test, when controlling for other variables. It also interact with the ESCS status of students. In our first groups of model, controlling for other variables, for students who all have 1 as ESCS score, those whose parents have 1 higher level of education status are expected to have around 12 more points on average, in the three PISA tests. While for students who all have 2 as ESCS score, those whose parents have 1 higher level of education status are expected to have around 18 more points on average.    
+    
+2. On country level, in different regions, the relationships between national income and students' PISA scores are different. For example, in varying slope model, when controlling for student level variables, the associations between math scores and national income are positive. However, the association is stronger for students from countries in Europe & Central Asia than students from countries in Middle East & North Africa.   
+
+3. Education acheivement is a complicated issue. In this study, I just tested several elements that I am interested in. Although the data supports that there are certain associations between the predictors and the PISA test scores, there is no easy conclusion about causal relationship or what strategy will definite be effective to improve education acheivment. Though I have been being interested in PISA test for a long time, this is my first attempt to analyze the data myself, and it has been a great learning opportunity for me to understand the complexity of international level school-based test.   
+    
+## 3.2.Limitations:    
+1. In first step of collecting data and cleaning data, I was first surprised by how international organizations are open to share data. Then quickly, I got frustrated by the quality of data. There are many missing or invalid data in both database. Therefore I have to make a lot of assumptions when cleaning and processing data. For example, when cleaning data for country level indicators, I use average over five years time span instead of a certain year . Because no year that all country have data entry, I have to assume that the three-year-average can be a good approximate of the real data.
+I'm very curious about how people leverage these two database, especially how PISA team work on the data to generate thorough analysis.   
+    
+2. The PISA Student Level data were collected via questionnaires. Therefore, the self-reported data, e.g. learning time, parents education status can be different than real status.  
+
+    
+### Appendix
+#### References
+[1] OECD (2013), PISA 2012 Assessment and Analytical Framework: Mathematics, Reading, Science, Problem Solving and Financial Literacy, PISA, OECD Publishing, Paris, https://doi.org/10.1787/9789264190511-en.   
+[2] Cresswell, J., U. Schwantner and C. Waters (2015), A Review of International Large-Scale Assessments in Education: Assessing Component Skills and Collecting Contextual Data, PISA, The World Bank, Washington, D.C./OECD Publishing, Paris, https://doi.org/10.1787/9789264248373-en.   
+[3] Education Statistics From World Bank Open Data  https://www.kaggle.com/theworldbank/education-statistics/home   
+[4] Student Questionnaire data file http://www.oecd.org/pisa/data/pisa2012database-downloadabledata.htm   
+  
+#### Tables and Figures
+1. Summary of country level predictors
+```{r country_table, echo=FALSE, results="asis"}
+stargazer(CountryLevel, title = "Country Level Predictors",digits = 1, header = FALSE)
+```
+2. Summary of student level predictors
+```{r student_table, echo=FALSE, results="asis"}
+stargazer(StudentLevel[, -c(4:6,13:16)], title = "Student Level Predictors",digits = 1, header = FALSE)
+```
+ 
+
+
+
+
+
